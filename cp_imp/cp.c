@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <string.h>
+#include <dirent.h>
 
 struct parameters{
 	unsigned int recursive:1;
@@ -10,13 +11,23 @@ struct parameters{
 	unsigned int interactive:1;
 };
 
+int check_copy(char *src,char *dst,struct parameters *params){
+	struct stat st;
+	if (params->interactive && stat(dst, &st) == 0) {
+		printf("overwrite ? [y/N] ");
+		int c = getchar();
+		int yes=(c=='y'||c=='Y')?1:0;
+		while (c != '\n' && c != EOF){
+			c = getchar();
+		}
+		return yes;
+	}
+	return 1;
+}
+
 void copy(FILE *src,FILE *dst,struct parameters *params){
 	size_t capacity=4096;
-	char *buff=malloc(capacity);
-	if (buff==NULL){
-		perror("malloc");
-		exit(EXIT_FAILURE);
-	}
+	char buff[4096];
 	size_t bytes_read=0;
 	while ((bytes_read=fread(buff,1,capacity,src))>0){
 		size_t bytes_written=fwrite(buff,1,bytes_read,dst);
@@ -25,8 +36,6 @@ void copy(FILE *src,FILE *dst,struct parameters *params){
 			exit(EXIT_FAILURE);
 		}
 	}
-	free(buff);
-	fclose(src);
 }
 
 void make_path(char destination[],char *dst_dir,char *src_path){
@@ -44,7 +53,56 @@ void make_path(char destination[],char *dst_dir,char *src_path){
 }
 
 void copy_recursive(char *src_dir,char *dst_dir,struct parameters *params){
-	
+	DIR *sdir;
+	struct dirent *entry;
+	sdir=opendir(src_dir);
+	if (!sdir){
+		perror("opendir");
+		exit(EXIT_FAILURE);
+	}
+	char newpath[4096];
+	while ((entry=readdir(sdir))!=NULL){
+		if (strcmp(entry->d_name,".")==0 || strcmp(entry->d_name,"..")==0){
+			continue;
+		}
+		snprintf(newpath,4096,"%s/%s",src_dir,entry->d_name);
+		struct stat st;
+		if(stat(newpath,&st)!=0){
+			perror("stat");
+			exit(EXIT_FAILURE);
+		}
+		if (S_ISDIR(st.st_mode)){
+			char destination[4096];
+			snprintf(destination,4096,"%s/%s",dst_dir,entry->d_name);
+			if (mkdir(destination,0755)!=0){
+				perror("mkdir");
+				exit(EXIT_FAILURE);
+			}
+			copy_recursive(newpath,destination,params);
+		}else{
+			FILE *src,*dst;
+			src=fopen(newpath,"rb");
+			if (!src){
+				perror("fopen");
+				exit(EXIT_FAILURE);
+			}
+			char destination[4096];
+			snprintf(destination,4096,"%s/%s",dst_dir,entry->d_name);
+			if (check_copy(newpath,destination,params)==0){
+				fclose(src);
+				return ;
+			}
+			dst=fopen(destination,"wb");
+			if (!dst){
+				perror("fopen");
+				exit(EXIT_FAILURE);
+			}
+			copy(src,dst,params);
+			fclose(dst);
+			fclose(src);
+		}
+	}
+	closedir(sdir);
 }
 
 int main(int argc, char *argv[]){
@@ -81,33 +139,71 @@ int main(int argc, char *argv[]){
 			exit(EXIT_FAILURE);
 		}
 		for (int i=optind;i<argc-1;i++){
-			//check if src is dir for recursive here too
-			src=fopen(argv[i],"rb");
-			if (!src){
-				perror("fopen");
+			struct stat st;
+			if (stat(argv[i],&st)!=0){
+				perror("stat");
 				exit(EXIT_FAILURE);
 			}
-			char destination[4096];
-			make_path(destination,dst_dir,argv[i]);
-			dst=fopen(destination,"wb");
-			if (!dst){
-				perror("fopen");
-				exit(EXIT_FAILURE);
+			if (S_ISDIR(st.st_mode)){
+				if (params.recursive){
+					char destination[4096];
+					make_path(destination,dst_dir,argv[i]);
+					if (mkdir(destination,0755)!=0){
+						perror("mkdir");
+						exit(EXIT_FAILURE);
+					}
+					copy_recursive(argv[i],destination,&params);
+				}
+				else{
+					printf("error: Recursive mode not enabled\n");
+					exit(EXIT_FAILURE);
+				}
 			}
-			copy(src,dst,&params);
-			fclose(dst);
+			else{
+				src=fopen(argv[i],"rb");
+				if (!src){
+					perror("fopen");
+					exit(EXIT_FAILURE);
+				}
+				char destination[4096];
+				make_path(destination,dst_dir,argv[i]);
+				if (check_copy(argv[i],destination,&params)==0){
+					fclose(src);
+					continue;
+				}
+				dst=fopen(destination,"wb");
+				if (!dst){
+					perror("fopen");
+					exit(EXIT_FAILURE);
+				}
+				copy(src,dst,&params);
+				fclose(dst);
+				fclose(src);
+			}
 		}
 	}
 	//Single file
 	else{
 		struct stat st;
-		stat(argv[optind],&st);
+		if (stat(argv[optind],&st)!=0){
+			perror("stat");
+			exit(EXIT_FAILURE);
+		}
 		if (S_ISDIR(st.st_mode)){
 			if (params.recursive){
 				struct stat dt;
-				stat(argv[optind+1],&dt);
+				if (stat(argv[optind+1],&dt)!=0){
+					perror("stat");
+					exit(EXIT_FAILURE);
+				}
 				if (S_ISDIR(dt.st_mode)){
-					copy_recursive(argv[optind],argv[optind+1],&params);
+					char destination[4096];
+					make_path(destination,argv[optind+1],argv[optind]);
+					if (mkdir(destination,0755)!=0){
+						perror("mkdir");
+						exit(EXIT_FAILURE);
+					}
+					copy_recursive(argv[optind],destination,&params);
 					exit(EXIT_SUCCESS);
 				}
 				else{
@@ -122,6 +218,9 @@ int main(int argc, char *argv[]){
 		}
 		else{
 			src=fopen(argv[optind],"rb");
+			if (check_copy(argv[optind],argv[optind+1],&params)==0){
+				return 0;
+			}
 			dst=fopen(argv[optind+1],"wb");
 			if (!src || !dst){
 				perror("fopen");
@@ -129,6 +228,7 @@ int main(int argc, char *argv[]){
 			}
 			copy(src,dst,&params);
 			fclose(dst);
+			fclose(src);
 		}
 	}
 	return 0;
