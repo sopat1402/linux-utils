@@ -6,18 +6,13 @@ The goal of this repository is not to perfectly recreate GNU Coreutils, but to u
 
 ## Utilities
 
-* `ls` – Directory listing with support for `-a` and `-l`
-* `cat` – File concatenation with support for `-n`, `-E`, and `-T`
+* `ls` - Directory listing with support for `-a` and `-l`
+* `cat` - File concatenation with support for `-n`, `-E`, and `-T`
+* `wc` - Word count, line count and byte count for `-l`,`-w` and `-c`
+* `cp` - Copying multiple files and directory trees recursively with `-r` and interactive mode with `-i`
 
 More utilities will be added as I continue learning.
 
-## Topics Covered
-
-* Pointers and memory management
-* File and directory APIs
-* Command-line argument parsing
-* Streams and standard I/O
-* Unix system programming
 
 ## Build
 
